@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LogIt AI — Chat to Log Your Life</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="glass-bg"></div>
+
+  <div class="app-wrapper">
+    <!-- Left Chat Container (Mobile First design inside desktop shell) -->
+    <main class="chat-container">
+      <header class="chat-header">
+        <div class="avatar">⚡</div>
+        <div class="header-details">
+          <h2>LogIt AI</h2>
+          <span class="status" id="server-status">● Connecting…</span>
+        </div>
+      </header>
+
+      <!-- Message History -->
+      <div class="message-history" id="chat-box">
+        <div class="message system">
+          <div class="bubble">
+            <p>👋 Hello! I am your personal metric logger. Type or speak to log habits, workouts, sleep, or mood.</p>
+            <p class="suggestion">💡 Try: <em>"Slept 8 hours, felt energetic, mood 9/10, workout 45m"</em></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Composer Input -->
+      <div class="composer">
+        <div class="composer-inner">
+          <textarea id="log-input" placeholder="Type what you want to log..." rows="1"></textarea>
+          <div class="composer-actions">
+            <button id="mic-btn" class="action-btn" title="Record Voice">🎙️</button>
+            <button id="send-btn" class="send-btn">Send</button>
+          </div>
+        </div>
+        <div id="mic-overlay" class="mic-overlay hidden">
+          <div class="visualizer">
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+            <div class="bar"></div>
+          </div>
+          <span>Recording voice note... click to stop</span>
+        </div>
+      </div>
+    </main>
+
+    <!-- Right Dashboard Container (Live Metrics Visualizer) -->
+    <aside class="dashboard-container">
+      <header class="dashboard-header">
+        <h2>Live Logs Database</h2>
+        <div class="header-actions">
+          <button id="export-csv" class="btn-clear">Export CSV</button>
+          <button id="clear-logs" class="btn-clear">Reset DB</button>
+        </div>
+      </header>
+
+      <!-- KPI metrics -->
+      <section class="kpis">
+        <div class="kpi-card">
+          <span class="kpi-title">MAPPED LOGS</span>
+          <span class="kpi-value" id="count-logs">0</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-title">AVG SLEEP</span>
+          <span class="kpi-value" id="avg-sleep">-</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-title">AVG MOOD</span>
+          <span class="kpi-value" id="avg-mood">-</span>
+        </div>
+        <div class="kpi-card">
+          <span class="kpi-title">DAY STREAK</span>
+          <span class="kpi-value" id="streak-days">-</span>
+        </div>
+      </section>
+
+      <!-- Chart visualizer -->
+      <section class="chart-panel">
+        <h3>Metrics Progression</h3>
+        <div class="canvas-container">
+          <canvas id="metrics-chart"></canvas>
+        </div>
+      </section>
+
+      <!-- Logs database tables -->
+      <section class="logs-table-panel">
+        <h3>Parsed Structured Records</h3>
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Sleep</th>
+                <th>Mood</th>
+                <th>Workout</th>
+                <th>Raw Text</th>
+              </tr>
+            </thead>
+            <tbody id="logs-list">
+              <tr class="empty-state">
+                <td colspan="5">No logs recorded yet. Send your first message to parse.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </aside>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
