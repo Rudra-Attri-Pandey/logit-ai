@@ -3,8 +3,10 @@
  *   - AI mode:     GEMINI_API_KEY set. POST /api/parse-ai extracts entries via Gemini.
  *   - Regex mode:  no key. POST /api/parse does deterministic server-side parsing.
  *                  Returns { entry, ai:false }. NEVER fakes AI output.
- * Store: append-only JSONL file at data/log.jsonl (local dev).
- *        Ephemeral on Vercel — see README. localStorage stays as offline cache.
+ * Store: Supabase PostgREST table `logit_entries` when SUPABASE_URL +
+ *        SUPABASE_SERVICE_ROLE_KEY are set (persistent). Otherwise append-only
+ *        JSONL file at data/log.jsonl (local dev, ephemeral on Vercel — see
+ *        README). localStorage stays as offline cache.
  */
 'use strict';
 
@@ -12,10 +14,12 @@ require('dotenv').config();
 const path = require('path');
 const fs = require('fs');
 const net = require('net');
+const crypto = require('crypto');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
+const { sbInsert, sbList, sbDelete, sbCount, sbConfigured } = require('./supabase');
 
 const APP_DIR = __dirname;
 const GEMINI_KEY = (process.env.GEMINI_API_KEY || '').trim();
@@ -58,7 +62,7 @@ app.use(express.json({ limit: '10kb' }));
 app.use('/api/', rateLimit({ windowMs: 15 * 60 * 1000, max: 60, standardHeaders: 'draft-7' }));
 
 // Sensitive-file guard: never expose secrets, stores, or server internals.
-const SENSITIVE = /(\.env(\.|$)|package(-lock)?\.json|\.db$|\.sqlite3?$|(^|\/)server\.js$|\.map$|(^|\/)data\/|\.jsonl$)/i;
+const SENSITIVE = /(\.env(\.|$)|package(-lock)?\.json|\.db$|\.sqlite3?$|(^|\/)server\.js$|(^|\/)supabase\.js$|\.map$|(^|\/)data\/|\.jsonl$)/i;
 app.use((req, res, next) => {
   if (SENSITIVE.test(req.path)) return res.status(404).json({ error: 'Not found' });
   next();
@@ -182,7 +186,7 @@ function parseEntry(text) {
   const tags = parseTags(raw, diet);
   const date = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
   return {
-    id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    id: crypto.randomUUID(),
     date,
     sleep_hours: sleepHours,
     mood,
@@ -200,7 +204,9 @@ function entryHasSignal(e) {
     || e.water_ml != null || (Array.isArray(e.diet) && e.diet.length > 0);
 }
 
-// --- JSONL store -------------------------------------------------------------
+// --- Store: Supabase PostgREST (persistent) or JSONL file (dev) --------------
+const TABLE = 'logit_entries';
+
 function readEntries() {
   try {
     if (!fs.existsSync(STORE)) return [];
@@ -218,6 +224,51 @@ function appendEntry(entry) {
   return entry;
 }
 
+// Persist one entry: PostgREST when configured, else append to the JSONL file.
+async function storePersist(entry) {
+  if (sbConfigured()) {
+    const { id, date, raw, sleep_hours, mood, workout, water_ml, diet, tags, created_at } = entry;
+    await sbInsert(TABLE, { id, date, raw, sleep_hours, mood, workout, water_ml, diet, tags, created_at });
+    return;
+  }
+  appendEntry(entry);
+}
+
+// Latest N entries, newest first.
+async function storeLatest(limit) {
+  if (sbConfigured()) return sbList(TABLE, { order: 'created_at', limit });
+  return readEntries().slice(-limit).reverse();
+}
+
+// Every entry in chronological (append) order — CSV export.
+async function storeChrono() {
+  if (sbConfigured()) return sbList(TABLE, { order: 'created_at', ascending: true });
+  return readEntries();
+}
+
+// Entries with date >= cutoff (stats window), newest date first.
+async function storeSince(cutoff) {
+  if (sbConfigured()) {
+    const rows = await sbList(TABLE, { filter: { date: `gte.${cutoff}` }, order: 'date' });
+    return rows.filter((e) => typeof e.date === 'string' && e.date >= cutoff);
+  }
+  return readEntries().filter((e) => typeof e.date === 'string' && e.date >= cutoff);
+}
+
+async function storeCount() {
+  if (sbConfigured()) return sbCount(TABLE);
+  return readEntries().length;
+}
+
+async function storeClear() {
+  if (sbConfigured()) {
+    // created_at is set on every insert, so this matches (and clears) all rows.
+    await sbDelete(TABLE, { created_at: 'not.is.null' });
+    return;
+  }
+  try { fs.writeFileSync(STORE, '', 'utf8'); } catch { /* ignore */ }
+}
+
 // --- Stats ---------------------------------------------------------------------
 function isoDay(offsetDays) {
   const d = new Date();
@@ -225,10 +276,9 @@ function isoDay(offsetDays) {
   return d.toISOString().slice(0, 10);
 }
 
-function computeStats(days) {
-  const all = readEntries();
+async function computeStats(days) {
   const cutoff = isoDay(days - 1);
-  const inRange = all.filter((e) => typeof e.date === 'string' && e.date >= cutoff);
+  const inRange = await storeSince(cutoff);
   const avg = (vals) => {
     const v = vals.filter((n) => typeof n === 'number' && Number.isFinite(n));
     if (!v.length) return null;
@@ -346,11 +396,17 @@ async function callGemini(text) {
 }
 
 // --- API -------------------------------------------------------------------------
-app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, mode: AI_MODE ? 'ai' : 'regex', ai: AI_MODE, simulated: false, count: readEntries().length });
-});
+// Express 4 does not catch async rejections; wrap handlers so store errors
+// become clean 500s instead of hanging requests.
+const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-app.post('/api/parse', (req, res) => {
+app.get('/api/health', wrap(async (_req, res) => {
+  let count = null;
+  try { count = await storeCount(); } catch { /* store unreachable */ }
+  res.json({ ok: true, mode: AI_MODE ? 'ai' : 'regex', ai: AI_MODE, simulated: false, count });
+}));
+
+app.post('/api/parse', wrap(async (req, res) => {
   const { text } = req.body || {};
   if (typeof text !== 'string' || !text.trim()) {
     return res.status(400).json({ error: 'Missing "text" string in request body.' });
@@ -365,11 +421,13 @@ app.post('/api/parse', (req, res) => {
       ai: false, simulated: false, entry,
     });
   }
-  appendEntry(entry);
+  try { await storePersist(entry); } catch (e) {
+    return res.status(500).json({ error: `Persist failed: ${(e && e.message) || e}`, ai: false, simulated: false });
+  }
   return res.json({ entry, ai: false, simulated: false, persisted: true });
-});
+}));
 
-app.post('/api/parse-ai', async (req, res) => {
+app.post('/api/parse-ai', wrap(async (req, res) => {
   const { text } = req.body || {};
   if (typeof text !== 'string' || !text.trim()) {
     return res.status(400).json({ error: 'Missing "text" string in request body.' });
@@ -386,7 +444,7 @@ app.post('/api/parse-ai', async (req, res) => {
   try {
     const clean = await callGemini(text.trim());
     const entry = {
-      id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      id: crypto.randomUUID(),
       date: new Date().toISOString().slice(0, 10),
       ...clean,
       raw: text.trim(),
@@ -398,7 +456,9 @@ app.post('/api/parse-ai', async (req, res) => {
         ai: true, simulated: false, entry,
       });
     }
-    appendEntry(entry);
+    try { await storePersist(entry); } catch (e) {
+      return res.status(500).json({ error: `Persist failed: ${(e && e.message) || e}`, ai: true, simulated: false });
+    }
     return res.json({ entry, ai: true, simulated: false, persisted: true, provider: 'gemini' });
   } catch (e) {
     return res.status(502).json({
@@ -406,30 +466,30 @@ app.post('/api/parse-ai', async (req, res) => {
       ai: false, simulated: false,
     });
   }
-});
+}));
 
-app.get('/api/stats', (req, res) => {
+app.get('/api/stats', wrap(async (req, res) => {
   let days = parseInt(req.query.days, 10);
   if (!Number.isFinite(days) || days < 1) days = 7;
   if (days > 365) days = 365;
-  res.json(computeStats(days));
-});
+  res.json(await computeStats(days));
+}));
 
-app.get('/api/logs', (req, res) => {
+app.get('/api/logs', wrap(async (req, res) => {
   let limit = parseInt(req.query.limit, 10);
   if (!Number.isFinite(limit) || limit < 1) limit = 100;
   if (limit > 1000) limit = 1000;
-  const all = readEntries();
-  res.json({ count: all.length, entries: all.slice(-limit), ai: false, simulated: false });
-});
+  const entries = await storeLatest(limit);
+  res.json({ count: entries.length, entries, ai: false, simulated: false });
+}));
 
 function csvCell(v) {
   const s = String(v ?? '');
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-app.get('/api/export.csv', (_req, res) => {
-  const all = readEntries();
+app.get('/api/export.csv', wrap(async (_req, res) => {
+  const all = await storeChrono();
   const header = 'date,sleep_hours,mood,workout_minutes,workout_distance_km,workout_kind,water_ml,diet,tags,raw';
   const rows = all.map((e) => [
     e.date ?? '',
@@ -446,11 +506,20 @@ app.get('/api/export.csv', (_req, res) => {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="logit-export.csv"');
   res.send([header, ...rows].join('\n'));
-});
+}));
 
-app.delete('/api/logs', (_req, res) => {
-  try { fs.writeFileSync(STORE, '', 'utf8'); } catch { /* ignore */ }
-  res.json({ ok: true, count: 0 });
+app.delete('/api/logs', wrap(async (_req, res) => {
+  try {
+    await storeClear();
+    return res.json({ ok: true, count: 0 });
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: `Clear failed: ${(e && e.message) || e}` });
+  }
+}));
+
+// Store/async failures land here as a clean 500 (never a fake success).
+app.use((err, _req, res, _next) => {
+  res.status(500).json({ error: `Store error: ${(err && err.message) || err}`, simulated: false });
 });
 
 // --- Boot: PORT or first free 30xx ----------------------------------------
@@ -463,7 +532,9 @@ function listenOn(port) {
       app.listen(port, () => {
         console.log(`[logit] listening on http://localhost:${port}`);
         console.log(`[logit] mode: ${AI_MODE ? 'AI (provider: gemini) + regex' : 'REGEX (no GEMINI_API_KEY set — /api/parse-ai returns 503, add a key for AI parsing)'}`);
-        console.log(`[logit] store: ${STORE}`);
+        console.log(`[logit] store: ${sbConfigured()
+          ? `Supabase PostgREST table ${TABLE} (persistent)`
+          : `${STORE} (dev mode — set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY to persist to Supabase)`}`);
         console.log(`[logit] CORS origins: ${CORS_ORIGINS.join(', ')}`);
       });
     });
