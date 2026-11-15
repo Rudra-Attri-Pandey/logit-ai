@@ -164,7 +164,7 @@ document.addEventListener('DOMContentLoaded', () => {
       ctx.fillText(label, padding + (chartLogs.length - 1) * stepX - 10, padding + 15);
     };
 
-    drawLine(sleepOf, 12, '#6366f1', 'Sleep (hrs)');
+    drawLine(sleepOf, 12, '#0cc0e3', 'Sleep (hrs)');
     drawLine(moodOf, 10, '#10b981', 'Mood (/10)');
   };
 

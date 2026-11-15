@@ -4,13 +4,13 @@
   --surface: rgba(22, 28, 45, 0.4);
   --surface-hover: rgba(22, 28, 45, 0.6);
   --border: rgba(255, 255, 255, 0.08);
-  --border-focus: rgba(99, 102, 241, 0.5);
+  --border-focus: rgba(12, 192, 227, 0.5);
   --fg: #f3f4f6;
   --muted: #9ca3af;
   
-  --accent: #6366f1;
-  --accent-glow: rgba(99, 102, 241, 0.25);
-  --accent-hover: #4f46e5;
+  --accent: #0cc0e3;
+  --accent-glow: rgba(12, 192, 227, 0.25);
+  --accent-hover: #0997b3;
   --success: #10b981;
   
   --font-heading: 'Outfit', sans-serif;
@@ -46,7 +46,7 @@ body {
   width: 100%;
   height: 100%;
   background: 
-    radial-gradient(circle at 10% 20%, rgba(99, 102, 241, 0.15) 0%, transparent 40%),
+    radial-gradient(circle at 10% 20%, rgba(12, 192, 227, 0.15) 0%, transparent 40%),
     radial-gradient(circle at 85% 85%, rgba(16, 185, 129, 0.1) 0%, transparent 45%);
   z-index: -1;
   pointer-events: none;
@@ -91,7 +91,7 @@ body {
 .avatar {
   width: 40px;
   height: 40px;
-  background: linear-gradient(135deg, #a78bfa, #6366f1);
+  background: linear-gradient(135deg, #e3910b, #0cc0e3);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -163,7 +163,7 @@ body {
 }
 
 .suggestion em {
-  color: #a78bfa;
+  color: #e3910b;
 }
 
 /* Composer Input */
@@ -442,3 +442,13 @@ td {
   padding: 2rem;
   font-style: italic;
 }
+
+/* Brand mark: intentionally NOT restyled by the UI palette. */
+.avatar {
+  background: linear-gradient(135deg, #a78bfa, #6366f1);
+  filter: drop-shadow(0 0 8px rgba(99, 102, 241, 0.25));
+}
+
+/* Readability: dark ink on the bright accent fill. */
+.message.user .bubble,
+.send-btn { color: #0A0C14; }
