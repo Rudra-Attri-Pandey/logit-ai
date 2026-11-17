@@ -29,7 +29,7 @@
 }
 
 body {
-  background-color: var(--bg);
+  background: linear-gradient(rgba(7,9,19,0.72), rgba(7,9,19,0.72)), linear-gradient(135deg, #0CC0E3 0%, #E3910B 50%, #E3490B 100%); background-attachment: fixed;
   color: var(--fg);
   font-family: var(--font-body);
   min-height: 100vh;
